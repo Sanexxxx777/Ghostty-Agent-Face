@@ -10,7 +10,7 @@
 
 // BASE_BG MUST equal your real Ghostty background-color (default #282c34).
 // If you change theme, update this constant.
-const vec3 BASE_BG = vec3(40.0, 44.0, 52.0) / 255.0;
+const vec3 BASE_BG = vec3(41.0, 44.0, 51.0) / 255.0;  // MEASURED on-screen idle bg (profile-transformed #282c34)
 
 float luma(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
 vec3  darker(vec3 a, vec3 b){ return mix(a, b, step(luma(b), luma(a))); }
@@ -124,21 +124,30 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
     // +2/255 offsets: below human perception even on bright wide-gamut displays,
     // still exactly classifiable (texture returns exact 8-bit values).
     float eps  = 0.001;
-    // Signals are +3/255 offsets from the theme background. Display profiles shift the
-    // rendered bytes by up to ~1.5/255, so the window is tolerant: full inside ~0.8,
-    // off by 2.5 (still below the 3/255 spacing between neighbouring signals).
-    float u3   = 3.0 / 255.0;
-    float wRun   = 1.0 - smoothstep(0.003, 0.010, distance(bg, BASE_BG + vec3(u3, 0.0, 0.0)));
-    float wWork  = 1.0 - smoothstep(0.003, 0.010, distance(bg, BASE_BG + vec3(0.0, u3, 0.0)));
-    float wDone  = 1.0 - smoothstep(0.003, 0.010, distance(bg, BASE_BG + vec3(0.0, 0.0, u3)));
-    float wAttn  = 1.0 - smoothstep(0.003, 0.010, distance(bg, BASE_BG + vec3(u3, u3, 0.0)));
-    float wDizzy = 1.0 - smoothstep(0.003, 0.010, distance(bg, BASE_BG + vec3(u3, 0.0, u3)));
-    float wSleep = 1.0 - smoothstep(0.003, 0.010, distance(bg, BASE_BG + vec3(0.0, u3, u3)));
-    float wHelp  = 1.0 - smoothstep(0.003, 0.010, distance(bg, BASE_BG + vec3(u3, u3, u3)));
-    float wIdle = clamp(1.0 - wRun - wDone - wAttn - wWork - wDizzy - wSleep - wHelp, 0.0, 1.0);
-    float wsum  = wIdle + wRun + wDone + wAttn + wWork + wDizzy + wSleep + wHelp + eps;
+    // Targets = MEASURED on-screen values (display profile transforms the sent bytes;
+    // calibrated {run cal_probe} 19.07). Tight window: full at exact byte match, off at +-1.5.
+    float wRun   = 1.0 - smoothstep(0.0028, 0.0058, distance(bg, vec3(43.0, 44.0, 51.0) / 255.0));
+    float wWork  = 1.0 - smoothstep(0.0028, 0.0058, distance(bg, vec3(41.0, 47.0, 51.0) / 255.0));
+    float wDone  = 1.0 - smoothstep(0.0028, 0.0058, distance(bg, vec3(41.0, 44.0, 54.0) / 255.0));
+    float wAttn  = 1.0 - smoothstep(0.0028, 0.0058, distance(bg, vec3(44.0, 47.0, 52.0) / 255.0));
+    float wDizzy = 1.0 - smoothstep(0.0028, 0.0058, distance(bg, vec3(43.0, 44.0, 54.0) / 255.0));
+    float wSleep = 1.0 - smoothstep(0.0028, 0.0058, distance(bg, vec3(41.0, 47.0, 54.0) / 255.0));
+    float wHelp  = 1.0 - smoothstep(0.0028, 0.0058, distance(bg, vec3(44.0, 47.0, 54.0) / 255.0));
+    // v6 states: +6/255 single-channel offsets (2x the +3 signals above), added 23.08.
+    // Window widened to 0.0035-0.0090 to absorb macOS color-profile rounding we have not
+    // individually re-measured on screen (only run/work/done were calibrated by cal_probe);
+    // nearest neighbour distance from any v6 target to any v4.1 target is >=0.0118, so the
+    // wider window still cannot cross-fire on an existing state.
+    float wFail  = 1.0 - smoothstep(0.0035, 0.0090, distance(bg, vec3(47.0, 44.0, 51.0) / 255.0));
+    float wTired = 1.0 - smoothstep(0.0035, 0.0090, distance(bg, vec3(41.0, 50.0, 51.0) / 255.0));
+    float wSkull = 1.0 - smoothstep(0.0035, 0.0090, distance(bg, vec3(41.0, 44.0, 57.0) / 255.0));
+    float wIdle = clamp(1.0 - wRun - wDone - wAttn - wWork - wDizzy - wSleep - wHelp
+                             - wFail - wTired - wSkull, 0.0, 1.0);
+    float wsum  = wIdle + wRun + wDone + wAttn + wWork + wDizzy + wSleep + wHelp
+                + wFail + wTired + wSkull + eps;
     wIdle /= wsum; wRun /= wsum; wDone /= wsum; wAttn /= wsum;
     wWork /= wsum; wDizzy /= wsum; wSleep /= wsum; wHelp /= wsum;
+    wFail /= wsum; wTired /= wsum; wSkull /= wsum;
     float signalActive = 1.0 - wIdle;     // 0 in IDLE -> pass-through
     float wWorkV = wWork + wHelp;          // HELPERS renders the WORK face (eyes/mouth/"...")
 
@@ -155,16 +164,23 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
     vec3 cWork  = vec3(0.95, 0.82, 0.35);
     vec3 cDizzy = vec3(0.72, 0.45, 0.95);
     vec3 cSleep = vec3(0.42, 0.40, 0.68);                              // dim blue-purple
+    vec3 cFail  = vec3(0.90, 0.20, 0.22);                              // pained red
+    vec3 cTired = vec3(0.38, 0.44, 0.52);                              // dim slate (fatigue)
+    vec3 cSkull = vec3(0.78, 0.78, 0.74);                              // pale bone
     vec3 faceCol = wIdle*cIdle + wRun*cRun + wDone*cDone + wAttn*cAttn
-                 + wWorkV*cWork + wDizzy*cDizzy + wSleep*cSleep;
+                 + wWorkV*cWork + wDizzy*cDizzy + wSleep*cSleep
+                 + wFail*cFail + wTired*cTired + wSkull*cSkull;
 
-    float eyeAsp   = wIdle*0.42 + wRun*0.95 + wDone*0.80 + wAttn*1.10 + wWorkV*0.30 + wDizzy*0.95 + wSleep*0.30;
+    float eyeAsp   = wIdle*0.42 + wRun*0.95 + wDone*0.80 + wAttn*1.10 + wWorkV*0.30 + wDizzy*0.95 + wSleep*0.30
+                   + wFail*0.60 + wTired*0.55 + wSkull*0.50;
     float arcAmt   = wDone;                                            // eyes -> "^" arcs
     float oAmt     = wAttn;                                            // mouth -> "o"
     float smile    = wDone*0.11;                                       // smile depth
-    float mouthW   = wIdle*0.13 + wRun*0.15 + wDone*0.30 + wAttn*0.10 + wWorkV*0.10 + wDizzy*0.20 + wSleep*0.08;
+    float mouthW   = wIdle*0.13 + wRun*0.15 + wDone*0.30 + wAttn*0.10 + wWorkV*0.10 + wDizzy*0.20 + wSleep*0.08
+                    + wFail*0.18 + wTired*0.12 + wSkull*0.10;
     float pupilAmt = wRun*0.9 + wAttn*0.7 + wIdle*0.35 + wWorkV*0.85;
-    float faceAmp  = wIdle*0.55 + wRun*0.90 + wDone*1.00 + wAttn*1.00 + wWorkV*0.85 + wDizzy*1.00 + wSleep*0.50;
+    float faceAmp  = wIdle*0.55 + wRun*0.90 + wDone*1.00 + wAttn*1.00 + wWorkV*0.85 + wDizzy*1.00 + wSleep*0.50
+                   + wFail*1.00 + wTired*0.70 + wSkull*0.95;
     faceAmp *= nightMul;
 
     // blink (mostly IDLE), Gaussian dip, ~5.5s cycle -> no pow() with negative base
@@ -257,6 +273,35 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
     eyeLv = mix(eyeLv, dashL, wSleep);
     eyeRv = mix(eyeRv, dashR, wSleep);
 
+    // FAIL: eyes -> "><" chevrons (pained squint). Right-pointing ">" on the left eye,
+    // left-pointing "<" on the right eye, read together as "><". Branchless V-stroke:
+    // fold y with abs(), then band around the line ay = (x0 - ax)*k (vertex at x=x0).
+    float x0F = 0.40, kF = 0.85;
+    float ayL = abs(pL.y) / eyeW;
+    float axL = pL.x / eyeW;
+    float chevL = (1.0 - smoothstep(0.10, 0.24, abs(ayL - (x0F - axL) * kF)))
+                * step(-0.55, axL) * step(axL, x0F);
+    float ayR = abs(pR.y) / eyeW;
+    float axR = -(pR.x / eyeW);
+    float chevR = (1.0 - smoothstep(0.10, 0.24, abs(ayR - (x0F - axR) * kF)))
+                * step(-0.55, axR) * step(axR, x0F);
+    eyeLv = mix(eyeLv, chevL, wFail);
+    eyeRv = mix(eyeRv, chevR, wFail);
+
+    // TIRED: eyes -> heavy eyelids (only the lower half of the normal disc shows)
+    float tiredL = discL * (1.0 - smoothstep(0.0, eyeW * 0.16, pL.y));
+    float tiredR = discR * (1.0 - smoothstep(0.0, eyeW * 0.16, pR.y));
+    eyeLv = mix(eyeLv, tiredL, wTired);
+    eyeRv = mix(eyeRv, tiredR, wTired);
+
+    // SKULL: eyes -> dark hollow eye-socket rings (lit rim only, same ring trick as "o" mouth)
+    float sockRL = length(pL) / eyeW;
+    float sockL  = (1.0 - smoothstep(0.85, 1.00, sockRL)) * smoothstep(0.55, 0.70, sockRL);
+    float sockRR = length(pR) / eyeW;
+    float sockR  = (1.0 - smoothstep(0.85, 1.00, sockRR)) * smoothstep(0.55, 0.70, sockRR);
+    eyeLv = mix(eyeLv, sockL, wSkull);
+    eyeRv = mix(eyeRv, sockR, wSkull);
+
     // --- mouth: smile stroke <-> "o" ring ---
     vec2 pM = n - vec2(0.0, -0.19);
     float lxM = pM.x / mouthW;
@@ -274,6 +319,18 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
     // SLEEP: tiny neutral mouth
     float sleepMouth = (1.0 - smoothstep(0.008, 0.022, abs(pM.y))) * (1.0 - smoothstep(0.4, 0.6, abs(lxM)));
     mouthV = mix(mouthV, sleepMouth, wSleep);
+
+    // FAIL: mouth -> straight flat line (pained/firm)
+    float failMouth = (1.0 - smoothstep(0.012, 0.030, abs(pM.y))) * (1.0 - smoothstep(0.55, 0.70, abs(lxM)));
+    mouthV = mix(mouthV, failMouth, wFail);
+
+    // SKULL: mouth -> row of short vertical teeth strokes (comb pattern via fract)
+    float toothSpace = 0.075;
+    float toothX = abs(fract(pM.x / toothSpace + 0.5) - 0.5) * toothSpace;
+    float teeth = (1.0 - smoothstep(0.010, 0.020, toothX))
+                * (1.0 - smoothstep(0.055, 0.075, abs(pM.y)))
+                * step(abs(pM.x), 0.145);
+    mouthV = mix(mouthV, teeth, wSkull);
 
     // --- "?" beside face (RUN only), gently bobbing ---
     vec2 qp = (n - vec2(0.47, 0.12 + 0.03*sin(iTime*2.0))) / 0.16;
@@ -316,7 +373,25 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
     sat = max(sat, 1.0 - smoothstep(0.85, 1.05, length((n - (loC + vec2( satG, 0.0))) / satW)));
     sat *= wHelp;
 
-    float field = max(max(eyeLv, eyeRv), max(mouthV, max(qv, max(xv, max(dots, max(zv, sat))))));
+    // SKULL: small nose triangle between the eyes (downward chevron, same V-stroke trick as FAIL eyes)
+    vec2  pNose = n - vec2(0.0, 0.00);
+    float ayN = abs(pNose.x) / 0.09;
+    float axN = -(pNose.y / 0.09);
+    float nose = (1.0 - smoothstep(0.12, 0.28, abs(ayN - (0.55 - axN) * 0.9)))
+               * step(-0.35, axN) * step(axN, 0.55);
+    nose *= wSkull;
+
+    // TIRED: 3-5 dim dots in a row under the face
+    float dotSpace = 0.09;
+    float tdx = abs(fract(n.x / dotSpace + 0.5) - 0.5) * dotSpace;
+    float tdy = abs(n.y - (-0.40));
+    float tiredDots = (1.0 - smoothstep(0.018, 0.030, tdx))
+                    * (1.0 - smoothstep(0.018, 0.030, tdy))
+                    * step(abs(n.x), 0.16)
+                    * 0.45;                                         // dim ("тусклые")
+    tiredDots *= wTired;
+
+    float field = max(max(eyeLv, eyeRv), max(mouthV, max(qv, max(xv, max(dots, max(zv, max(sat, max(nose, tiredDots))))))));
     field = clamp(field, 0.0, 1.0);
 
     // ---------- 4b. SLEEP aquarium: 4 ASCII fish (stateless Lissajous wander) ----------

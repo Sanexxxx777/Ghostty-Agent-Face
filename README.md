@@ -62,6 +62,7 @@ custom-shader-animation = always
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/agent-face.sh run" }] }],
     "PreToolUse":       [{ "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/agent-face.sh pre" }] }],
     "PostToolUse":      [{ "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/agent-face.sh run" }] }],
+    "PostToolUseFailure": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/agent-face.sh fail" }] }],
     "Stop":             [{ "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/agent-face.sh done" }] }],
     "Notification":     [{ "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/agent-face.sh attn" }] }],
     "PreCompact":       [{ "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/agent-face.sh dizzy" }] }],
@@ -90,6 +91,23 @@ printf '\033]111\033\\'          # reset -> idle
 
 The signal colors are deliberately near-identical to the theme background (`+2/255` on one or two channels): the background **never visibly changes**, with or without the shader — the signal is a color delta the eye cannot see.
 
+## What's new in v1.1
+
+Three new states, all on `+6/255` signal offsets (the seven `+3` combinations were taken):
+
+| State | Trigger | Look |
+|---|---|---|
+| `fail` | a tool call errors (`PostToolUseFailure`) | "><" eyes for ~2s, then back to work |
+| `tired` | `work`/`run` held for 10+ minutes (watcher) | half-closed eyes, dim progress dots |
+| `skull` | state says working but no agent process on the tty for 2+ minutes (watcher) | a skull |
+
+Two fixes worth having even if you skip the new states:
+
+- **`setsid` does not exist on macOS.** Every `(setsid ... &)` spawn in earlier versions failed silently under the output redirect, so the watcher (crash detect, auto-sleep) never actually ran. Replaced with `nohup ... </dev/null >/dev/null 2>&1 & disown`.
+- **`PostToolUse` only fires on success.** Tool errors arrive on a separate `PostToolUseFailure` event (its stdin JSON carries `error` and `is_interrupt` — Ctrl-C is skipped, it is not a failure).
+
+The watcher reads a per-tty state file (`.agent-face-state-<tty>`), so several parallel agent sessions don't mask each other's staleness.
+
 ## Tuning
 
 Everything is a constant in `agent-face.glsl`:
@@ -107,7 +125,7 @@ Signal colors live at the top of `agent-face.sh` and in the classifier threshold
 ## Notes & gotchas
 
 - Ghostty's GLSL→Metal chain **silently drops** shaders that fail to compile. If you edit the shader and the face disappears, simplify your change — there is no error message.
-- If your theme background differs from `#282c34`: update `BASE_BG` in the shader **and** recompute the hook colors as `background + 2` on the corresponding channels (R=thinking, G=working, B=done, RG=needs-you, RB=dizzy).
+- If your theme background differs from `#282c34`: update `BASE_BG` in the shader **and** recompute the hook colors as `background + 3` on the corresponding channels (R=thinking, G=working, B=done, RG=needs-you, RB=dizzy, GB=sleep, RGB=helpers) and `+ 6` for the v1.1 states (R=fail, G=tired, B=skull).
 - On terminals other than Ghostty the shader does nothing and the signals are invisible by design — nothing to clean up. Kill switch: `touch ~/.claude/hooks/agent-face.disabled`.
 
 ## Credits

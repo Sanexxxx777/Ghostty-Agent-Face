@@ -1,6 +1,6 @@
 #!/bin/bash
 # agent-face.sh — сигнал статуса агента терминалу Ghostty через фон (OSC 11)
-# Состояния: run|done|attn|work|dizzy|helpers|reset
+# Состояния: run|done|attn|work|dizzy|helpers|fail|tired|skull|reset
 # Хук-процесс без controlling tty — tty ищем подъёмом по цепочке родителей.
 # После каждой отправки цвета перезапускается сторож agent-face-watch.sh
 # (краш-детект + автосон + сброс по нажатию клавиши).
@@ -18,6 +18,14 @@ COLOR_WORK="#282F34"
 COLOR_DIZZY="#2B2C37"
 COLOR_SLEEP="#282F37"
 COLOR_HELPERS="#2B2F37"
+# v6: новые состояния на +6/255 (вдвое дальше от соседей -> запас на профильный сдвиг).
+COLOR_FAIL="#2E2C34"
+COLOR_TIRED="#283234"
+COLOR_SKULL="#282C3A"
+
+# Файл-таймер сторожа: "<unix ts> <state>", отдельно на КАЖДЫЙ tty (иначе параллельные
+# сессии Саши затирали бы друг другу таймер простоя/усталости одним общим файлом).
+STATE_FILE_DIR="$HOME/.claude/hooks"
 
 # Возвращает пару "tty pid" — pid предка, на котором tty был найден
 # (нужен сторожу как ANCHOR_PID для краш-детекта).
@@ -52,6 +60,14 @@ if [ "$state" = "pre" ]; then
     fi
 fi
 
+# fail = PostToolUseFailure(Bash): пропускаем, если это была отмена (Ctrl-C), не реальная ошибка.
+if [ "$state" = "fail" ] && [ ! -t 0 ]; then
+    hook_json=$(cat 2>/dev/null)
+    case "$hook_json" in
+        *'"is_interrupt":true'*) exit 0 ;;
+    esac
+fi
+
 case "$state" in
     run)     color="$COLOR_RUN" ;;
     done)    color="$COLOR_DONE" ;;
@@ -60,6 +76,9 @@ case "$state" in
     dizzy)   color="$COLOR_DIZZY" ;;
     sleep)   color="$COLOR_SLEEP" ;;
     helpers) color="$COLOR_HELPERS" ;;
+    fail)    color="$COLOR_FAIL" ;;
+    tired)   color="$COLOR_TIRED" ;;
+    skull)   color="$COLOR_SKULL" ;;
     reset)   color="" ;;
     *) exit 0 ;;
 esac
@@ -68,14 +87,23 @@ tty_info=$(find_tty "$$")
 [ -n "$tty_info" ] || exit 0
 tty_path=${tty_info% *}
 anchor_pid=${tty_info#* }
+state_file="$STATE_FILE_DIR/.agent-face-state-$(basename "$tty_path")"
 
 if [ "$state" = "reset" ]; then
+    printf '%s idle\n' "$(date +%s)" > "$state_file" 2>/dev/null
     pkill -f "agent-face-watch.sh $tty_path" 2>/dev/null
     printf '\033]111\007' > "$tty_path" 2>/dev/null
 else
+    printf '%s %s\n' "$(date +%s)" "$state" > "$state_file" 2>/dev/null
     if printf '\033]11;%s\007' "$color" > "$tty_path" 2>/dev/null; then
         pkill -f "agent-face-watch.sh $tty_path" 2>/dev/null
-        (setsid bash $HOME/.claude/hooks/agent-face-watch.sh "$tty_path" "$anchor_pid" "$state" >/dev/null 2>&1 &)
+        if [ "$state" = "fail" ]; then
+            # FAIL — гримаса на 1.5-2с, дальше сама возвращается в work (без ожидания следующего хука).
+            revert_cmd="sleep 2; printf '\033]11;%s\007' '$COLOR_WORK' > '$tty_path' 2>/dev/null; printf '%s work\n' \"\$(date +%s)\" > '$state_file' 2>/dev/null; nohup bash $HOME/.claude/hooks/agent-face-watch.sh '$tty_path' '$anchor_pid' work >/dev/null 2>&1 </dev/null & disown 2>/dev/null"
+            (nohup bash -c "$revert_cmd" >/dev/null 2>&1 </dev/null & disown 2>/dev/null)
+        else
+            (nohup bash $HOME/.claude/hooks/agent-face-watch.sh "$tty_path" "$anchor_pid" "$state" >/dev/null 2>&1 </dev/null & disown 2>/dev/null)
+        fi
     fi
 fi
 
